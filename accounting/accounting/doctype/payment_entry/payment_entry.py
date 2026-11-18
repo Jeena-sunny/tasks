@@ -2,23 +2,38 @@ import frappe
 from frappe.model.document import Document
 from frappe.utils import flt
 
+from accounting.general_ledger import make_gl_entries, make_reverse_gl_entries
+
 
 class PaymentEntry(Document):
-	def validate(self):
-		if flt(self.amount) <= 0:
-			frappe.throw("Amount must be greater than zero")
+    def validate(self):
+        if flt(self.amount) <= 0:
+            frappe.throw("Amount must be greater than zero")
 
-		if self.account_paid_from == self.account_paid_to:
-			frappe.throw("Account Paid From and Account Paid To cannot be the same")
+        if self.account_paid_from == self.account_paid_to:
+            frappe.throw("Account Paid From and Account Paid To cannot be the same")
 
-		self.validate_party()
+        self.validate_party()
 
-	def validate_party(self):
-		party_type = frappe.db.get_value("Party", self.party, "party_type")
-		if party_type != self.party_type:
-			frappe.throw(f"{self.party} is a {party_type}, not a {self.party_type}")
+    def validate_party(self):
+        party_type = frappe.db.get_value("Party", self.party, "party_type")
+        if party_type != self.party_type:
+            frappe.throw(f"{self.party} is a {party_type}, not a {self.party_type}")
 
-		if self.payment_type == "Receive" and self.party_type != "Customer":
-			frappe.throw("Receive payments must be from a Customer")
-		if self.payment_type == "Pay" and self.party_type != "Supplier":
-			frappe.throw("Pay payments must be made to a Supplier")
+        if self.payment_type == "Receive" and self.party_type != "Customer":
+            frappe.throw("Receive payments must be from a Customer")
+        if self.payment_type == "Pay" and self.party_type != "Supplier":
+            frappe.throw("Pay payments must be made to a Supplier")
+
+    def on_submit(self):
+        debit = {"account": self.account_paid_to, "debit": self.amount}
+        credit = {"account": self.account_paid_from, "credit": self.amount}
+        if self.payment_type == "Receive":
+            credit["party"] = self.party
+        else:
+            debit["party"] = self.party
+        make_gl_entries(self, [debit, credit])
+
+    def on_cancel(self):
+        self.ignore_linked_doctypes = ("GL Entry",)
+        make_reverse_gl_entries(self)
